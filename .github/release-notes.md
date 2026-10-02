@@ -1,6 +1,14 @@
 ## What's new
 
-- 0.2.7: **Fix Firewall…** on Linux now works on computers that updated themselves to 0.2.6
+- 0.2.8: Sound shared from another computer glitches less. MouseTail now keeps its small
+  buffer steady as the two computers' clocks drift apart, gives itself more room when the
+  network gets choppy (then shrinks back), and fades over any gap instead of clicking. Linux
+  also sends its sound in smaller, steadier pieces. If you still hear dropouts, a cable
+  helps more than anything: Wi-Fi, especially 2.4 GHz, can stall for a tenth of a second.
+
+From 0.2.7:
+
+- **Fix Firewall…** on Linux now works on computers that updated themselves to 0.2.6
   (the script it runs hadn't been installed there).
 
 From 0.2.6:
