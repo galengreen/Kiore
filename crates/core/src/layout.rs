@@ -315,17 +315,32 @@ impl Layout {
     /// Stretches of display edge where the cursor passes to another computer, for drawing in
     /// the arrangement view. Each is (start, end) in layout coordinates.
     pub fn crossing_edges(&self) -> Vec<(Point, Point)> {
-        self.edges_where(|from, to| from != to)
+        let edges = self.edges_where(|from, to| from != to);
+        edges.into_iter().map(|(_, _, a, b)| (a, b)).collect()
     }
 
     /// Stretches of machine `a`'s display edges that lead to machine `b`.
     pub fn edges_between(&self, a: usize, b: usize) -> Vec<(Point, Point)> {
-        self.edges_where(|from, to| from == a && to == b)
+        let edges = self.edges_where(|from, to| from == a && to == b);
+        edges.into_iter().map(|(_, _, a, b)| (a, b)).collect()
+    }
+
+    /// Stretches of `machine`'s display edges that lead to another computer, with the display
+    /// (its index) and side each is on: where a capture backend that sets barriers puts them.
+    pub fn exit_edges(&self, machine: usize) -> Vec<(usize, Side, Point, Point)> {
+        let edges = self.edges_where(|from, to| from == machine && to != machine);
+        edges
+            .into_iter()
+            .map(|(d, side, a, b)| (d.display, side, a, b))
+            .collect()
     }
 
     /// Stretches of display edge leading from one machine to another, for which `leads`
     /// (from machine, to machine) holds.
-    fn edges_where(&self, leads: impl Fn(usize, usize) -> bool) -> Vec<(Point, Point)> {
+    fn edges_where(
+        &self,
+        leads: impl Fn(usize, usize) -> bool,
+    ) -> Vec<(DisplayRef, Side, Point, Point)> {
         const STEP: f64 = 2.0;
         let mut out = vec![];
         for from in self.displays().collect::<Vec<_>>() {
@@ -351,7 +366,7 @@ impl Layout {
                     match (crosses, run) {
                         (true, None) => run = Some(v),
                         (false, Some(start)) => {
-                            out.push((at(start), at(v.min(hi))));
+                            out.push((from, side, at(start), at(v.min(hi))));
                             run = None;
                         }
                         _ => {}
@@ -640,6 +655,33 @@ mod tests {
         assert!(edges.contains(&(Point::new(-587.0, -484.0), Point::new(-587.0, 0.0))));
         // ...and the MacBook's left edge down to the iMac's bottom.
         assert!(edges.contains(&(Point::new(0.0, 0.0), Point::new(0.0, 596.0))));
+    }
+
+    #[test]
+    fn exit_edges_say_which_display_and_side() {
+        let l = real_desk();
+        assert_eq!(
+            l.exit_edges(0),
+            vec![
+                (0, Side::Left, Point::new(0.0, 0.0), Point::new(0.0, 596.0)),
+                (
+                    1,
+                    Side::Left,
+                    Point::new(-587.0, -484.0),
+                    Point::new(-587.0, 0.0)
+                ),
+            ]
+        );
+        // The iMac's right edge leads to the Mac all the way down: the Dell, then the MacBook.
+        assert_eq!(
+            l.exit_edges(1),
+            vec![(
+                0,
+                Side::Right,
+                Point::new(-587.0, -484.0),
+                Point::new(-587.0, 596.0)
+            )]
+        );
     }
 
     #[test]

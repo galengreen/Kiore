@@ -20,6 +20,17 @@ if [[ -d $omarchy ]]; then
   fi
 fi
 
+gnome_uuid=mousetail@galen.green
+gnome_extension=${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions/$gnome_uuid
+if [[ -d $gnome_extension ]]; then
+  gnome-extensions disable "$gnome_uuid" 2>/dev/null || gjs -c "
+    const {Gio} = imports.gi;
+    const shell = new Gio.Settings({schema_id: 'org.gnome.shell'});
+    shell.set_strv('enabled-extensions', shell.get_strv('enabled-extensions').filter(u => u !== '$gnome_uuid'));
+    Gio.Settings.sync();" 2>/dev/null
+  rm -rf "$gnome_extension"
+fi
+
 rm -rf "${XDG_STATE_HOME:-$HOME/.local/state}/mousetail"
 rm -rf "${XDG_DATA_HOME:-$HOME/.local/share}/mousetail"
 [[ ${1:-} == --forget ]] && rm -rf "$config_home/mousetail"

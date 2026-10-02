@@ -7,6 +7,8 @@
 //! against the edge". That feeds the same `Controller` the Mac uses; when it decides to
 //! cross we lock the pointer to the strip, take keyboard focus and inhibit compositor
 //! shortcuts, and forward everything until it brings the cursor home.
+//!
+//! Without layer-shell (GNOME), the desktop portal does the watching instead (`portal`).
 
 use std::collections::HashSet;
 use std::os::fd::{AsFd, AsRawFd, FromRawFd, OwnedFd};
@@ -50,7 +52,7 @@ use wayland_protocols_wlr::layer_shell::v1::client::{
 
 use crate::platform::Edge;
 
-enum Cmd {
+pub(super) enum Cmd {
     Apply(Action),
     Edges(Vec<Edge>),
     HideCursor,
@@ -83,7 +85,7 @@ impl Capture {
         let (ready_tx, ready_rx) = mpsc::channel();
         thread::Builder::new()
             .name("capture".into())
-            .spawn(move || match Grabber::connect(controller, actions) {
+            .spawn(move || match Grabber::connect(&controller, &actions) {
                 Ok((grabber, queue)) => {
                     let _ = ready_tx.send(Ok(()));
                     if let Err(e) = grabber.run(queue, rx, wake_rx) {
@@ -96,7 +98,8 @@ impl Capture {
                     }
                 }
                 Err(e) => {
-                    let _ = ready_tx.send(Err(e));
+                    debug!("no layer-shell capture ({e:#}), so the desktop portal");
+                    super::portal::run(controller, actions, rx, wake_rx, ready_tx);
                 }
             })?;
         ready_rx.recv().context("capture thread died")??;
@@ -204,8 +207,8 @@ struct Globals {
 
 impl Grabber {
     fn connect(
-        controller: Arc<Mutex<Controller>>,
-        actions: UnboundedSender<Action>,
+        controller: &Arc<Mutex<Controller>>,
+        actions: &UnboundedSender<Action>,
     ) -> anyhow::Result<(Self, EventQueue<Grabber>)> {
         let conn = Connection::connect_to_env().context("connecting to the Wayland compositor")?;
         // Gather globals on a throwaway queue, then build the real state.
@@ -262,8 +265,8 @@ impl Grabber {
             buttons: HashSet::new(),
             grab: None,
             scroll: PendingScroll::default(),
-            controller,
-            actions,
+            controller: controller.clone(),
+            actions: actions.clone(),
         };
         Ok((grabber, queue))
     }

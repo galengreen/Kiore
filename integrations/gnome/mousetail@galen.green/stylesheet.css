@@ -1,0 +1,50 @@
+/* The top-bar menu, as wide as the Omarchy panel. */
+.mousetail-menu { width: 22em; }
+.mousetail-title { font-weight: bold; font-size: 1.15em; }
+.mousetail-summary,
+.mousetail-note { font-size: 0.9em; }
+.mousetail-urgent { font-size: 0.9em; color: #f66151; }
+.mousetail-logo { margin-right: 6px; }
+.mousetail-actions { spacing: 6px; }
+.mousetail-button { padding: 4px 12px; font-size: 0.9em; }
+.mousetail-icon-button { padding: 5px; border-radius: 99px; }
+.mousetail-code { font-size: 2.2em; font-weight: 600; }
+.mousetail-peer { font-weight: 500; }
+.mousetail-peer-detail { font-size: 0.85em; }
+.mousetail-code-entry { min-width: 6em; }
+.mousetail-forget:hover { color: #f66151; }
+/* Arrange Displays, in MouseTail's own colours. */
+.modal-dialog.mousetail-arrange {
+  background-color: #080808;
+  border: 1px solid rgba(242, 241, 236, 0.09);
+  color: #f2f1ec;
+}
+.modal-dialog.mousetail-arrange .modal-dialog-content-box { max-width: 900px; spacing: 8px; }
+.mousetail-arrange-title { font-size: 1.4em; font-weight: 600; color: #f2f1ec; }
+.mousetail-arrange-help { font-size: 0.9em; color: rgba(242, 241, 236, 0.64); }
+.mousetail-arrange-canvas {
+  background-color: #111212;
+  border: 1px solid rgba(242, 241, 236, 0.09);
+  border-radius: 12px;
+}
+.mousetail-tile {
+  border-radius: 5px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background-gradient-direction: vertical;
+}
+.mousetail-tile-this { background-gradient-start: #383939; background-gradient-end: #292a2a; color: rgba(242, 241, 236, 0.64); }
+.mousetail-tile-other { background-gradient-start: #4a4535; background-gradient-end: #353226; border-color: rgba(255, 255, 255, 0.18); color: #f2f1ec; }
+.mousetail-tile-offline { background-gradient-start: #232424; background-gradient-end: #1b1c1c; border-color: rgba(255, 255, 255, 0.08); color: rgba(242, 241, 236, 0.42); }
+.mousetail-tile-lifted { border: 2px solid #ffeba7; box-shadow: 0 0 8px 1px rgba(255, 224, 110, 0.35); }
+.mousetail-tile-main { height: 4px; margin: 1px; border-radius: 4px; background-color: rgba(242, 241, 236, 0.45); }
+.mousetail-tile-name { font-size: 0.85em; font-weight: 600; text-align: center; }
+.mousetail-tile-display { font-size: 0.75em; text-align: center; }
+.mousetail-crossing { background-color: #ffeba7; border-radius: 2px; box-shadow: 0 0 6px 2px rgba(255, 224, 110, 0.4); }
+.mousetail-arrange-legend { spacing: 6px; }
+.mousetail-arrange-legend-label { font-size: 0.8em; color: rgba(242, 241, 236, 0.64); margin-right: 12px; }
+.mousetail-swatch { width: 14px; height: 10px; border-radius: 2px; border: 1px solid rgba(255, 255, 255, 0.15); }
+.mousetail-swatch-this { background-color: #383939; }
+.mousetail-swatch-other { background-color: #4a4535; }
+.mousetail-swatch-crossing { height: 3px; border-width: 0; background-color: #ffeba7; }
+.modal-dialog.mousetail-arrange .modal-dialog-button { background-color: #ffeba7; color: #080808; }
+.modal-dialog.mousetail-arrange .modal-dialog-button:hover { background-color: #fff2c4; }

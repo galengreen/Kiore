@@ -50,7 +50,8 @@ planned; the platform layer has room for it.
   serves the CLI and the Omarchy bar plugin, so every front end sees the same thing.
 - **Linux daemon** `mousetail run`: headless, runs as a systemd user service started with the
   Hyprland session. No window. Status via an Omarchy shell bar plugin (Omarchy 4 replaced
-  Waybar with its Quickshell shell); pairing and events via desktop notifications.
+  Waybar with its Quickshell shell); pairing and events via desktop notifications. On GNOME,
+  a Shell extension (`integrations/gnome`) does the same from the top bar.
   Feasibility of every piece below is recorded in [`research/RESULTS.md`](research/RESULTS.md).
 
 ### Roles
@@ -72,7 +73,7 @@ that `Enter`, brings its own cursor home.
 |---|---|---|---|
 | macOS | Quartz event tap over the whole screen | HID-level `CGEventPost` (drags, click counts, modifier flags, pixel scrolling); wakes the display | CoreGraphics |
 | Linux, layer-shell compositors (Hyprland, Sway, KDE…) | 1-px overlay strips on edges that lead somewhere; relative-pointer motion while resting on one; pointer lock + exclusive keyboard + shortcuts inhibitor while remote | `zwlr_virtual_pointer` + `zwp_virtual_keyboard` (no root), else uinput | `xdg-output` |
-| Linux, GNOME | not yet (needs the InputCapture portal + libei) | uinput absolute pointer + keyboard (after `enable-input.sh` grants `/dev/uinput` via udev `uaccess`) | `xdg-output` |
+| Linux, GNOME | InputCapture portal: pointer barriers on the stretches of edge that lead somewhere, then everything over libei while remote. GNOME asks each time MouseTail starts. Barriers sit on screen edges, so injected positions and returning pointers keep off them (the middle of the pixel; a pixel in) | uinput absolute pointer + keyboard (after `enable-input.sh` grants `/dev/uinput` via udev `uaccess`) | `xdg-output` |
 
 Key codes travel as evdev codes. The receiving side translates for its platform: a Mac
 controlling Linux gets the Command remap (below); Linux controlling a Mac is positional (Super
@@ -345,7 +346,7 @@ practice the iMac dials the Mac and the Omarchy install needs no firewall change
   and installs by relaunching the app, but holds the install until nobody is using another
   computer through this Mac.
 - **Linux:** the daemon does the same (`crates/mousetail/src/update.rs`): verify, unpack, test-run
-  the new binary's `--version`, wait until idle, swap the binary and bar plugin by renaming,
+  the new binary's `--version`, wait until idle, swap the binary, bar plugin and GNOME extension by renaming,
   keep the old binary in `~/.local/state/mousetail/mousetail.previous`, then `exec` the new one
   so the systemd service carries straight on. Only installer-made installs update themselves.
 - Discovery advertises each computer's version (TXT `app`); seeing a newer one prompts a check

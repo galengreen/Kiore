@@ -10,6 +10,7 @@ mod keystate;
 pub mod mpris;
 mod outputs;
 pub mod player;
+mod portal;
 pub mod ripple;
 mod uinput;
 

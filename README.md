@@ -50,7 +50,7 @@ Linux → Linux, and each can be both at different times.
 | **Linux: Hyprland** (incl. [Omarchy](https://omarchy.org)) | Yes | Yes |
 | **Linux: Sway, river, niri and other wlroots desktops** | Yes, untested | Yes, untested |
 | **Linux: KDE Plasma** | Yes, untested | Yes, after `enable-input.sh`, untested |
-| **Linux: GNOME** | Not yet | Yes, after `enable-input.sh`, untested |
+| **Linux: GNOME** | Yes; GNOME asks each time MouseTail starts | Yes, after `enable-input.sh`, untested |
 | **Windows** | Planned | Planned |
 
 Clipboard works everywhere except GNOME (which doesn't let background apps use the
@@ -75,15 +75,16 @@ curl -fsSL https://mousetail.galen.green/install.sh | sh
 ```
 
 This installs `~/.local/bin/mousetail`, runs it as a systemd user service that starts with your
-desktop and, on Omarchy, adds an icon to the bar. On GNOME or KDE the installer will ask you
-to run `~/.local/share/mousetail/enable-input.sh` once (it needs your password) so other
+desktop and adds an icon to the bar on Omarchy, or to the top bar on GNOME 50 (from your next
+login). On GNOME or KDE the installer will ask you to run
+`~/.local/share/mousetail/enable-input.sh` once (it needs your password) so other
 computers can control this one. `~/.local/share/mousetail/uninstall.sh` removes everything. To
 let your Mac wake this computer from sleep, run `~/.local/share/mousetail/enable-wake.sh`
 (asks for your password once).
 
 **Pair:** on a Mac, click the mouse in the menu bar, then **Pair…** next to the other computer;
 on Linux, run `mousetail pair`. Type the code the other computer shows. Then put it where it sits on
-your desk: **Arrange Displays…** on a Mac or in the Omarchy bar, or `mousetail place <computer> left` on Linux. Both
+your desk: **Arrange Displays…** on a Mac, in the Omarchy bar or in GNOME's top bar, or `mousetail place <computer> left` on Linux. Both
 computers share one arrangement, so you only do this once.
 
 **Updates** install themselves. MouseTail checks for a new release every few hours (and
@@ -151,6 +152,7 @@ Releases are built by GitHub Actions when a `v*` tag is pushed.
 | `crates/mousetail` | The daemon and CLI, with macOS and Linux backends |
 | `apps/macos` | SwiftUI menu bar app |
 | `integrations/omarchy` | Omarchy bar plugin |
+| `integrations/gnome` | GNOME Shell extension (and its test) |
 | `website` | [mousetail.galen.green](https://mousetail.galen.green/) |
 | `docs/DESIGN.md` | Architecture and the reasoning behind it |
 | `research` | The feasibility experiments done before building, and their results |

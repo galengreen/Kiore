@@ -480,7 +480,17 @@ impl Node {
     async fn start_capture(self: Arc<Self>, actions: mpsc::UnboundedSender<Action>) {
         let mut prompt = true;
         loop {
-            match platform::Capture::start(self.controller.clone(), actions.clone(), prompt) {
+            // On its own thread: it can wait as long as someone takes to answer GNOME's
+            // permission dialog, and quitting waits for blocking tasks but not for threads.
+            let (controller, actions) = (self.controller.clone(), actions.clone());
+            let (done, started) = oneshot::channel();
+            std::thread::spawn(move || {
+                let _ = done.send(platform::Capture::start(controller, actions, prompt));
+            });
+            let started = started
+                .await
+                .unwrap_or_else(|_| Err(anyhow::anyhow!("starting capture stopped")));
+            match started {
                 Ok(c) => {
                     let _ = self.capture.set(c);
                     *self.capture_error.lock().unwrap() = None;
@@ -1450,6 +1460,7 @@ impl Node {
                 self.apply_actions(actions);
             }
             Message::Enter { x, y } if self.target.get().is_some() => {
+                debug!("cursor ← {id}");
                 // Being controlled: our own cursor comes home if it's off on another computer
                 // (perhaps this one: its own mouse took the cursor back, or we both crossed at
                 // once), and our capture stands down until they leave.

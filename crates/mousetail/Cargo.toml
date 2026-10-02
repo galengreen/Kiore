@@ -45,3 +45,6 @@ wl-clipboard-rs = "0.9"
 pipewire = { version = "0.10", features = ["v0_3_49"] }
 xkbcommon = "0.9"
 zbus = { version = "5", default-features = false, features = ["tokio"] }
+# libei, which carries input captured through the desktop portal (GNOME).
+reis = { version = "0.7", features = ["tokio"] }
+futures-util = "0.3"

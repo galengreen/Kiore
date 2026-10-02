@@ -1,0 +1,8 @@
+{
+  "uuid": "mousetail@galen.green",
+  "name": "MouseTail",
+  "description": "Share one keyboard, mouse, clipboard and sound between this computer and the ones beside it. Shows what's connected and any pairing code.",
+  "url": "https://github.com/galengreen/mousetail",
+  "shell-version": ["50"],
+  "version-name": "0.2.7"
+}

@@ -99,9 +99,10 @@ impl Uinput {
             }
             Cmd::Motion(x, y) => {
                 let b = self.bounds;
-                let sx = (((x - b.x) / b.w.max(1.0)).clamp(0.0, 1.0) * RANGE as f64).round() as i32;
-                let sy = (((y - b.y) / b.h.max(1.0)).clamp(0.0, 1.0) * RANGE as f64).round() as i32;
-                self.emit(&[(EV_ABS, ABS_X, sx), (EV_ABS, ABS_Y, sy)])
+                self.emit(&[
+                    (EV_ABS, ABS_X, axis(x - b.x, b.w)),
+                    (EV_ABS, ABS_Y, axis(y - b.y, b.h)),
+                ])
             }
             Cmd::Button(code, down) | Cmd::Key(code, down) => {
                 let held = if ev::is_button(code) {
@@ -165,6 +166,45 @@ impl Uinput {
                     self.emit(&[(EV_KEY, code, 0)])?;
                 }
                 Ok(())
+            }
+        }
+    }
+}
+
+/// Where `v` points along a desktop `len` points wide lands on an absolute axis: the middle of
+/// its pixel. Exactly on a screen's edge is where GNOME puts the barriers that tell this
+/// computer's own mouse is pushing off it (see `portal`), and one landing there sets them off.
+/// The desktop reads the axis back as `value * len / (RANGE + 1)`.
+fn axis(v: f64, len: f64) -> i32 {
+    let len = len.max(1.0);
+    let pixel = v.clamp(0.0, len - 1.0).floor();
+    ((pixel + 0.5) / len * (RANGE + 1) as f64) as i32
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn positions_land_inside_pixels_never_on_an_edge() {
+        let read_back = |value: i32, len: f64| value as f64 * len / (RANGE + 1) as f64;
+        for len in [1080.0, 1920.0, 3760.0, 5120.0] {
+            for v in [
+                -2.0,
+                0.0,
+                0.2,
+                317.99,
+                318.0,
+                1051.875,
+                len - 1.0,
+                len + 3.0,
+            ] {
+                let p = read_back(axis(v, len), len);
+                let pixel = v.clamp(0.0, len - 1.0).floor();
+                assert!(
+                    p > pixel + 0.25 && p < pixel + 0.75,
+                    "{v} on {len}: read back as {p}"
+                );
             }
         }
     }

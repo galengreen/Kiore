@@ -3,8 +3,9 @@
 //! Every few hours, soon after starting, and whenever another computer advertises a newer
 //! release, this checks the latest release's `latest.json`. A newer release is downloaded,
 //! its signature checked against the release key, unpacked, and test-run; then, once nobody
-//! is using another computer through this one, the binary and the Omarchy bar plugin are
-//! swapped in and MouseTail restarts itself. The previous binary is kept alongside.
+//! is using another computer through this one, the binary, the Omarchy bar plugin and the
+//! GNOME extension are swapped in and MouseTail restarts itself. The previous binary is kept
+//! alongside.
 //!
 //! Only installs made by the installer (`~/.local/bin/mousetail`) update themselves;
 //! development builds and packaged installs are left alone.
@@ -23,6 +24,7 @@ use tracing::{info, warn};
 use crate::node::Node;
 
 const PLUGIN_ID: &str = "nz.galengreen.mousetail";
+const GNOME_EXTENSION: &str = "mousetail@galen.green";
 /// How often to look for a new release.
 const INTERVAL: Duration = Duration::from_secs(6 * 60 * 60);
 /// Checks prompted by other computers are spaced at least this far apart.
@@ -273,7 +275,8 @@ async fn prepare() -> anyhow::Result<Option<Staged>> {
     .await?
 }
 
-/// Swap in the new binary (keeping the old one) and the Omarchy plugin. Returns the binary.
+/// Swap in the new binary (keeping the old one), the Omarchy plugin and the GNOME extension.
+/// Returns the binary.
 fn install(staged: &Staged) -> anyhow::Result<PathBuf> {
     let binary = installed_binary().context("the installed binary has gone")?;
     let state = state_dir();
@@ -289,6 +292,16 @@ fn install(staged: &Staged) -> anyhow::Result<PathBuf> {
     let new_plugin = staged.dir.join("omarchy-plugin").join(PLUGIN_ID);
     if plugin.is_dir() && new_plugin.is_dir() {
         replace_dir(&new_plugin, &plugin).context("updating the Omarchy bar plugin")?;
+    }
+    let data = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("HOME").unwrap_or_default()).join(".local/share")
+        });
+    let extension = data.join("gnome-shell/extensions").join(GNOME_EXTENSION);
+    let new_extension = staged.dir.join("gnome-extension").join(GNOME_EXTENSION);
+    if extension.is_dir() && new_extension.is_dir() {
+        replace_dir(&new_extension, &extension).context("updating the GNOME extension")?;
     }
     let helpers = helpers_dir();
     for name in [
@@ -322,14 +335,25 @@ fn replace_dir(from: &Path, to: &Path) -> anyhow::Result<()> {
     let old = to.with_file_name(format!(".{name}.old"));
     let _ = std::fs::remove_dir_all(&temp);
     let _ = std::fs::remove_dir_all(&old);
-    std::fs::create_dir_all(&temp)?;
-    for entry in std::fs::read_dir(from)? {
-        let entry = entry?;
-        std::fs::copy(entry.path(), temp.join(entry.file_name()))?;
-    }
+    copy_dir(from, &temp)?;
     std::fs::rename(to, &old)?;
     std::fs::rename(&temp, to)?;
     let _ = std::fs::remove_dir_all(&old);
+    Ok(())
+}
+
+/// Copy a folder with everything in it (the GNOME extension has `icons/`).
+fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+    std::fs::create_dir_all(to)?;
+    for entry in std::fs::read_dir(from)? {
+        let entry = entry?;
+        let to = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            copy_dir(&entry.path(), &to)?;
+        } else {
+            std::fs::copy(entry.path(), to)?;
+        }
+    }
     Ok(())
 }
 
@@ -378,4 +402,37 @@ fn run_ok(cmd: &mut Command) -> anyhow::Result<()> {
         bail!("{}", String::from_utf8_lossy(&out.stderr).trim());
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn replacing_a_folder_brings_its_subfolders_and_drops_what_went() {
+        let root =
+            std::env::temp_dir().join(format!("mousetail-replace-dir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let (new, installed) = (root.join("new"), root.join("installed"));
+        std::fs::create_dir_all(new.join("icons")).unwrap();
+        std::fs::write(new.join("extension.js"), "new").unwrap();
+        std::fs::write(new.join("icons/mousetail-symbolic.svg"), "<svg/>").unwrap();
+        std::fs::create_dir_all(&installed).unwrap();
+        std::fs::write(installed.join("extension.js"), "old").unwrap();
+        std::fs::write(installed.join("gone.js"), "old").unwrap();
+
+        let replaced = replace_dir(&new, &installed);
+        let read = |path: &str| std::fs::read_to_string(installed.join(path)).ok();
+        let (js, icon, gone) = (
+            read("extension.js"),
+            read("icons/mousetail-symbolic.svg"),
+            read("gone.js"),
+        );
+        let _ = std::fs::remove_dir_all(&root);
+
+        replaced.unwrap();
+        assert_eq!(js.as_deref(), Some("new"));
+        assert_eq!(icon.as_deref(), Some("<svg/>"));
+        assert_eq!(gone, None);
+    }
 }

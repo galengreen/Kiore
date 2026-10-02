@@ -1,11 +1,11 @@
 #!/bin/bash
-# Install MouseTail for the current user on Linux (Wayland: Hyprland / Omarchy). No sudo.
+# Install MouseTail for the current user on Linux (Wayland: Hyprland / Omarchy, GNOME…). No sudo.
 #
 #   ./install.sh                  from a release download (uses the included binary)
 #   scripts/install-linux.sh      from a source checkout (builds it; needs Rust)
 #
 # Installs ~/.local/bin/mousetail, runs it as a systemd user service that starts with your
-# desktop, and on Omarchy adds a status icon to the bar.
+# desktop, and on Omarchy or GNOME adds a status icon to the bar.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 bin_dir=$HOME/.local/bin
@@ -13,16 +13,24 @@ config_home=${XDG_CONFIG_HOME:-$HOME/.config}
 unit_dir=$config_home/systemd/user
 plugin_id=nz.galengreen.mousetail
 omarchy=$config_home/omarchy
+gnome_uuid=mousetail@galen.green
+gnome_extensions=${XDG_DATA_HOME:-$HOME/.local/share}/gnome-shell/extensions
 # Helper scripts (enable-input, enable-firewall, enable-wake, uninstall) live here, since a `curl | sh` install
 # deletes its download when it's done.
 share=${XDG_DATA_HOME:-$HOME/.local/share}/mousetail
 
 say() { printf '\033[1m==> %s\033[0m\n' "$*"; }
 
+# GNOME: the desktop says so, or (run from SSH or a TTY) its shell is running for this user.
+on_gnome() {
+  [[ ${XDG_CURRENT_DESKTOP:-} == *GNOME* ]] || pgrep -u "$(id -u)" -x gnome-shell >/dev/null 2>&1
+}
+
 if [[ -x $here/mousetail ]]; then
   # Release download: everything is alongside this script.
   binary=$here/mousetail
   plugin_src=$here/omarchy-plugin/$plugin_id
+  gnome_src=$here/gnome-extension/$gnome_uuid
   helpers=$here
   helper_suffix=.sh
 else
@@ -38,6 +46,7 @@ else
   (cd "$repo" && "$cargo" build --release --quiet -p mousetail)
   binary=$repo/target/release/mousetail
   plugin_src=$repo/integrations/omarchy/$plugin_id
+  gnome_src=$repo/integrations/gnome/$gnome_uuid
   helpers=$repo/scripts
   helper_suffix=-linux.sh
 fi
@@ -114,6 +123,35 @@ if [[ -d $omarchy ]]; then
     else
       echo "    Your bar uses Omarchy's default layout; add \"MouseTail\" from the bar settings."
     fi
+  fi
+fi
+
+# GNOME only runs an extension made for its version.
+gnome_version=$(gnome-shell --version 2>/dev/null | grep -oE '[0-9]+' | head -1 || true)
+gnome_supported=$(grep -so '"shell-version": *\[[^]]*' "$gnome_src/metadata.json" | grep -oE '[0-9]+' | paste -sd/ || true)
+if on_gnome && [[ -n $gnome_version && -n $gnome_supported && /$gnome_supported/ != */$gnome_version/* ]]; then
+  echo
+  echo "MouseTail's top-bar menu needs GNOME $gnome_supported (this is GNOME $gnome_version), so it isn't added."
+elif on_gnome && [[ -d $gnome_src ]]; then
+  say "Adding MouseTail to GNOME's top bar"
+  rm -rf "${gnome_extensions:?}/$gnome_uuid"
+  mkdir -p "$gnome_extensions"
+  cp -r "$gnome_src" "$gnome_extensions/$gnome_uuid"
+  # GNOME only finds a new extension when you log in (on Wayland it can't reload), so if it
+  # won't switch this one on now, put it on the list for the next login.
+  if ! gnome-extensions enable "$gnome_uuid" 2>/dev/null; then
+    gjs -c "
+      const {Gio} = imports.gi;
+      const shell = new Gio.Settings({schema_id: 'org.gnome.shell'});
+      const on = shell.get_strv('enabled-extensions');
+      if (!on.includes('$gnome_uuid'))
+        shell.set_strv('enabled-extensions', [...on, '$gnome_uuid']);
+      shell.set_strv('disabled-extensions', shell.get_strv('disabled-extensions').filter(u => u !== '$gnome_uuid'));
+      Gio.Settings.sync();" 2>/dev/null || true
+    echo "    It shows in the top bar after you next log in."
+  fi
+  if [[ $(gsettings get org.gnome.shell disable-user-extensions 2>/dev/null) == true ]]; then
+    echo "    GNOME's extensions are switched off: turn them on in the Extensions app to see it."
   fi
 fi
 
