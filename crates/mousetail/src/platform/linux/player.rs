@@ -48,6 +48,7 @@ fn run(rx: mpsc::Receiver<AudioPacket>) {
     let playout = Arc::new(Mutex::new(Playout::default()));
     let mut output: Option<Output> = None;
     let mut last_packet = Instant::now();
+    let mut last_stats = Instant::now();
     let mut last_default_check = Instant::now();
     loop {
         match rx.recv_timeout(Duration::from_millis(250)) {
@@ -66,6 +67,11 @@ fn run(rx: mpsc::Receiver<AudioPacket>) {
             }
             Err(RecvTimeoutError::Timeout) => {}
             Err(RecvTimeoutError::Disconnected) => return,
+        }
+        if output.is_some() && last_stats.elapsed() > Duration::from_secs(10) {
+            last_stats = Instant::now();
+            let stats = playout.lock().unwrap().stats();
+            debug!(?stats, "playing");
         }
         if output.is_some() && last_packet.elapsed() > IDLE {
             debug!("no sound for a while; releasing the output stream");

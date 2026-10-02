@@ -105,6 +105,9 @@ fn run(
         "device.icon-name" => "computer",
         "audio.channels" => "2",
         "audio.position" => "FL,FR",
+        // Hand sound over about every 10 ms. Left to itself PipeWire may batch 20-40 ms at a
+        // time, which arrives on the other computer in lumps as big as its whole cushion.
+        *pw::keys::NODE_LATENCY => "512/48000",
     };
     let stream = pw::stream::StreamBox::new(&core, "MouseTail", props)?;
     let _listener = stream

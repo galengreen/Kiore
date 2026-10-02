@@ -247,10 +247,17 @@ Sending:
 
 Whatever is captured is encoded with Opus (48 kHz stereo, 10 ms frames, 160 kbit/s, in-band
 FEC) and sent as QUIC datagrams; silence isn't sent. The listener decodes into a playout buffer
-(40 ms cushion, conceals short gaps, re-buffers after pauses, skips ahead if it falls >120 ms
-behind, resamples to the device rate) and plays through its current default output (cpal on
-macOS, a PipeWire stream on Linux), opening it only while sound is arriving. Opus is built in on
-macOS (self-contained app) and uses the system library on Linux.
+(40 ms cushion, conceals short gaps, re-buffers after pauses, skips ahead if it falls 80 ms
+past its cushion, resamples to the device rate) and plays through its current default output
+(cpal on macOS, a PipeWire stream on Linux), opening it only while sound is arriving. Opus is
+built in on macOS (self-contained app) and uses the system library on Linux.
+
+The two machines' sound clocks drift apart by up to a few hundred ppm, so the resampler runs up
+to 0.2% fast or slow to hold the cushion at its target instead of clicking every few minutes. A
+dropout mid-sound grows the cushion by 20 ms (to 160 ms at most), and each calm minute shrinks it
+10 ms back towards 40. Dropouts fade out and re-buffered sound fades in over 5 ms. Linux's
+virtual speaker asks PipeWire for 512-frame quanta, so packets leave evenly rather than in
+20-40 ms lumps.
 
 **Media controls.** While another computer's sound is arriving, the listener presents itself
 as a media player named after that computer: on macOS the "Now Playing" app

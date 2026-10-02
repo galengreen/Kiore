@@ -2,7 +2,8 @@
 //!
 //! The sending machine exposes a virtual speaker; whatever plays into it is encoded and sent
 //! as unreliable datagrams. The receiving machine decodes into a `Playout` buffer that the
-//! audio device drains, keeping a small cushion (about 40 ms) so Wi-Fi jitter doesn't click.
+//! audio device drains, keeping a small cushion (40 ms, more on a choppy network) so Wi-Fi
+//! jitter and the two machines' slightly different sound clocks don't click.
 
 use std::collections::VecDeque;
 use std::ffi::c_int;
@@ -211,16 +212,58 @@ impl Receiver {
 /// The receiving side's cushion between the network and the sound card.
 ///
 /// Fills with 48 kHz stereo; the device pulls at its own rate and channel count. Starts
-/// playing once `target` is banked, goes quiet and re-buffers on underrun, and skips ahead if
-/// it falls more than `max` behind (clock drift, a burst after a stall).
+/// playing once `target` is banked and goes quiet and re-buffers on underrun.
+///
+/// The two computers' sound clocks never quite agree, so left alone the cushion would slowly
+/// drain or overfill and click every few minutes. Instead playback runs a hair faster or
+/// slower (at most 0.2%, too little to hear) to hold the cushion at its target. A dropout
+/// mid-sound means the network is choppier than the cushion allows, so it grows, and shrinks
+/// back after a calm minute. Bursts that overfill it by more than `headroom` are skipped.
 pub struct Playout {
     samples: VecDeque<i16>,
     playing: bool,
+    /// The cushion to aim for, between `base` and `MAX_TARGET_MS`, in samples.
     target: usize,
-    max: usize,
+    base: usize,
+    headroom: usize,
     /// Fractional read position for rate conversion, in 48 kHz frames.
     phase: f64,
+    /// The cushion averaged over a couple of seconds, in samples, to steer the rate by.
+    level: f64,
+    /// Seconds played since the cushion last had to grow.
+    calm: f64,
+    /// Fades in after a re-buffer and out from the last frame on underrun, so neither clicks.
+    gain: f32,
+    last: [f32; 2],
+    /// The current rate adjustment, and what went wrong since the last `stats`.
+    nudge: f64,
+    dropouts: u32,
+    skipped: usize,
 }
+
+/// How playback has been going, for the log.
+#[derive(Debug)]
+pub struct PlayoutStats {
+    pub level_ms: usize,
+    pub target_ms: usize,
+    /// How much faster (or slower, negative) than the device sound is being played, which
+    /// settles at the difference between the two computers' clocks.
+    pub nudge_ppm: i32,
+    pub dropouts: u32,
+    pub skipped_ms: usize,
+}
+
+const MAX_TARGET_MS: usize = 160;
+const GROW_MS: usize = 20;
+const SHRINK_MS: usize = 10;
+const SHRINK_AFTER_S: f64 = 60.0;
+/// Rate adjustment per millisecond the cushion is off target, and its limit.
+const NUDGE_PER_MS: f64 = 0.000_05;
+const MAX_NUDGE: f64 = 0.002;
+const SMOOTHING_S: f64 = 2.0;
+const FADE_S: f32 = 0.005;
+/// Quieter than this, a dropout is the end of the sound rather than a glitch.
+const SILENT: f32 = 0.001;
 
 impl Default for Playout {
     fn default() -> Self {
@@ -230,13 +273,21 @@ impl Default for Playout {
 
 impl Playout {
     pub fn new(target_ms: usize, max_ms: usize) -> Self {
-        let per_ms = SAMPLE_RATE as usize / 1000 * CHANNELS;
+        let target = target_ms * PER_MS;
         Self {
             samples: VecDeque::new(),
             playing: false,
-            target: target_ms * per_ms,
-            max: max_ms.max(target_ms) * per_ms,
+            target,
+            base: target,
+            headroom: max_ms.saturating_sub(target_ms) * PER_MS,
             phase: 0.0,
+            level: 0.0,
+            calm: 0.0,
+            gain: 0.0,
+            last: [0.0; 2],
+            nudge: 0.0,
+            dropouts: 0,
+            skipped: 0,
         }
     }
 
@@ -248,36 +299,75 @@ impl Playout {
 
     pub fn push(&mut self, pcm: &[i16]) {
         self.samples.extend(pcm);
-        if self.samples.len() > self.max {
+        if self.samples.len() > self.target + self.headroom {
             let excess = self.samples.len() - self.target;
             self.samples.drain(..excess - excess % CHANNELS);
+            self.skipped += excess;
         }
     }
 
     /// Buffered audio, in milliseconds.
     pub fn level_ms(&self) -> usize {
-        self.samples.len() / (SAMPLE_RATE as usize / 1000 * CHANNELS)
+        self.samples.len() / PER_MS
+    }
+
+    /// The cushion currently aimed for, in milliseconds.
+    pub fn target_ms(&self) -> usize {
+        self.target / PER_MS
     }
 
     /// Fill `out` (interleaved, `channels` per frame, at `rate` Hz) with audio or silence.
     pub fn pull(&mut self, out: &mut [f32], channels: usize, rate: u32) {
+        let channels = channels.max(1);
+        let rate = rate.max(1) as f64;
         if !self.playing && self.samples.len() >= self.target {
             self.playing = true;
+            self.level = self.samples.len() as f64;
+            self.gain = 0.0;
         }
-        let step = SAMPLE_RATE as f64 / rate.max(1) as f64;
-        for frame in out.chunks_mut(channels.max(1)) {
-            let available = self.samples.len() / CHANNELS;
-            if !self.playing || available < 2 {
-                self.playing = false;
-                frame.fill(0.0);
-                continue;
+        let frames = (out.len() / channels) as f64;
+        let mut step = SAMPLE_RATE as f64 / rate;
+        if self.playing {
+            let a = (frames / (rate * SMOOTHING_S)).min(1.0);
+            self.level += (self.samples.len() as f64 - self.level) * a;
+            let off_ms = (self.level - self.target as f64) / PER_MS as f64;
+            self.nudge = (off_ms * NUDGE_PER_MS).clamp(-MAX_NUDGE, MAX_NUDGE);
+            step *= 1.0 + self.nudge;
+            self.calm += frames / rate;
+            if self.calm > SHRINK_AFTER_S && self.target > self.base {
+                self.target = (self.target - SHRINK_MS * PER_MS).max(self.base);
+                self.calm = 0.0;
             }
-            // Linear interpolation between the two nearest 48 kHz frames.
-            let i = self.phase as usize;
-            let t = (self.phase - i as f64) as f32;
-            let at = |f: usize, c: usize| self.samples[f * CHANNELS + c] as f32 / 32768.0;
-            let l = at(i, 0) * (1.0 - t) + at(i + 1, 0) * t;
-            let r = at(i, 1) * (1.0 - t) + at(i + 1, 1) * t;
+        }
+        let fade = 1.0 / (FADE_S * rate as f32);
+        for frame in out.chunks_mut(channels) {
+            let available = self.samples.len() / CHANNELS;
+            let [l, r] = if self.playing && available >= 2 {
+                // Linear interpolation between the two nearest 48 kHz frames.
+                let i = self.phase as usize;
+                let t = (self.phase - i as f64) as f32;
+                let at = |f: usize, c: usize| self.samples[f * CHANNELS + c] as f32 / 32768.0;
+                self.gain = (self.gain + fade).min(1.0);
+                self.last = [
+                    (at(i, 0) * (1.0 - t) + at(i + 1, 0) * t) * self.gain,
+                    (at(i, 1) * (1.0 - t) + at(i + 1, 1) * t) * self.gain,
+                ];
+                self.phase += step;
+                let consumed = self.phase as usize;
+                if consumed > 0 {
+                    let n = (consumed * CHANNELS).min(self.samples.len());
+                    self.samples.drain(..n);
+                    self.phase -= consumed as f64;
+                }
+                self.last
+            } else {
+                if self.playing {
+                    self.underrun();
+                }
+                let g = (1.0 - fade).max(0.0);
+                self.last = self.last.map(|s| if s.abs() < 1e-6 { 0.0 } else { s * g });
+                self.last
+            };
             match frame.len() {
                 1 => frame[0] = (l + r) / 2.0,
                 _ => {
@@ -286,16 +376,35 @@ impl Playout {
                     frame[2..].fill(0.0);
                 }
             }
-            self.phase += step;
-            let consumed = self.phase as usize;
-            if consumed > 0 {
-                let n = (consumed * CHANNELS).min(self.samples.len());
-                self.samples.drain(..n);
-                self.phase -= consumed as f64;
-            }
+        }
+    }
+
+    /// How it's going, counting dropouts and skips since the last call.
+    pub fn stats(&mut self) -> PlayoutStats {
+        PlayoutStats {
+            level_ms: self.level_ms(),
+            target_ms: self.target_ms(),
+            nudge_ppm: (self.nudge * 1e6) as i32,
+            dropouts: std::mem::take(&mut self.dropouts),
+            skipped_ms: std::mem::take(&mut self.skipped) / PER_MS,
+        }
+    }
+
+    fn underrun(&mut self) {
+        self.playing = false;
+        let mid_sound = self.last.iter().any(|s| s.abs() > SILENT);
+        if mid_sound {
+            self.dropouts += 1;
+        }
+        if mid_sound && self.target < MAX_TARGET_MS * PER_MS {
+            self.target = (self.target + GROW_MS * PER_MS).min(MAX_TARGET_MS * PER_MS);
+            self.calm = 0.0;
         }
     }
 }
+
+/// Samples (interleaved) per millisecond.
+const PER_MS: usize = SAMPLE_RATE as usize / 1000 * CHANNELS;
 
 #[cfg(test)]
 mod tests {
@@ -416,7 +525,7 @@ mod tests {
 
     #[test]
     fn playout_resamples_and_maps_channels() {
-        let mut p = Playout::new(10, 120);
+        let mut p = Playout::new(100, 120);
         p.push(&tone(4800, 0)); // 100 ms at 48 kHz
         let mut out = vec![0.0f32; 441 * 6]; // 10 ms at 44.1 kHz, 6 channels
         p.pull(&mut out, 6, 44_100);
@@ -424,5 +533,62 @@ mod tests {
         assert!(out.chunks(6).all(|f| f[2..].iter().all(|s| *s == 0.0)));
         // 10 ms of output consumed ~10 ms of input.
         assert_eq!(p.level_ms(), 90);
+    }
+
+    /// Play `minutes` of sound arriving `ppm` fast (negative: slow) relative to the output,
+    /// in 10 ms packets, and return the lowest and highest cushion seen once playing.
+    fn drift(ppm: f64, minutes: usize) -> (usize, usize) {
+        let mut p = Playout::default();
+        let mut out = vec![0.0f32; 480 * 2];
+        let mut owed = 0.0;
+        let (mut low, mut high) = (usize::MAX, 0);
+        for tick in 0..minutes * 6000 {
+            owed += 480.0 * (1.0 + ppm / 1e6);
+            let n = owed as usize;
+            owed -= n as f64;
+            p.push(&tone(n, 0));
+            p.pull(&mut out, 2, 48_000);
+            if tick > 100 {
+                low = low.min(p.level_ms());
+                high = high.max(p.level_ms());
+            }
+        }
+        (low, high)
+    }
+
+    #[test]
+    fn playout_holds_its_cushion_when_the_clocks_disagree() {
+        // Uncorrected, 300 ppm is 18 ms a minute: 40 ms of cushion gone in a little over two.
+        // (Measured just after each pull, so up to one 10 ms packet short.)
+        for ppm in [300.0, -300.0] {
+            let (low, high) = drift(ppm, 5);
+            assert!(
+                low >= 20 && high <= 50,
+                "{ppm} ppm: cushion wandered {low}..{high} ms"
+            );
+        }
+    }
+
+    #[test]
+    fn playout_grows_its_cushion_after_a_dropout_and_fades_rather_than_clicks() {
+        let mut p = Playout::new(40, 120);
+        let mut out = vec![0.0f32; 480 * 2];
+        let loud = vec![20_000i16; 4800];
+        p.push(&loud);
+        for _ in 0..10 {
+            p.pull(&mut out, 2, 48_000);
+        }
+        // Ran dry mid-sound: no jump to silence, and a bigger cushion from now on.
+        assert!(out[out.len() - 2] > 0.0);
+        let mut steps = out.windows(2).map(|w| (w[1] - w[0]).abs());
+        assert!(steps.all(|d| d < 0.05), "output jumps");
+        assert_eq!(p.target_ms(), 60);
+        // Sound that ends quietly isn't a dropout.
+        let mut q = Playout::new(40, 120);
+        q.push(&vec![0i16; 4800]);
+        for _ in 0..12 {
+            q.pull(&mut out, 2, 48_000);
+        }
+        assert_eq!(q.target_ms(), 40);
     }
 }
